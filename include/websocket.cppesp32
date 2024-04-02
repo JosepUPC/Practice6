@@ -1,0 +1,123 @@
+#include <WiFi.h>
+#include <AsyncTCP.h>
+#include <WebSockets.h>
+
+// Credenciales WiFi
+const char* ssid = "SSID";
+const char* password = "PASSWORD";
+
+// URL de la página web con el tiempo
+const char* timeURL = "https://www.timeanddate.com/worldclock/spain/barcelona";
+
+// Puerto del servidor web
+const uint16_t webPort = 80;
+
+// Puerto del servidor WebSocket
+const uint16_t wsPort = 81;
+
+// Variable para almacenar el tiempo
+String time;
+
+// Servidor web
+AsyncWebServer server(webPort);
+
+// Servidor WebSocket
+AsyncWebSocket ws("/ws");
+
+void setup() {
+  Serial.begin(115200);
+
+  // Conectarse a la red WiFi
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("");
+  Serial.println("WiFi conectado");
+
+  // Iniciar el servidor web
+  server.begin();
+
+  // Iniciar el servidor WebSocket
+  ws.begin();
+
+  // Ruta para la página web
+  server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
+    request->send_P(200, "text/html", index_html);
+  });
+
+  // Función para recibir mensajes del cliente WebSocket
+  ws.onWebSocketMessage([](AsyncWebSocket *client, void *pMsg) {
+    // Convertir el mensaje a String
+    String msg = (char*)pMsg;
+
+    // Si el mensaje es "gettime", enviar el tiempo actual
+    if (msg == "gettime") {
+      client->text(time);
+    }
+  });
+
+  // Obtener el tiempo actual
+  getTime();
+}
+
+void loop() {
+  // Leer datos del servidor web y del servidor WebSocket
+  ws.cleanupClients();
+  server.handleClient();
+}
+
+void getTime() {
+  // Conectarse a la página web con el tiempo
+  WiFiClient client;
+  if (client.connect(timeURL, 80)) {
+    // Leer la respuesta del servidor
+    while (client.available()) {
+      char c = client.read();
+      time += c;
+    }
+
+    // Extraer la hora actual
+    int startPos = time.indexOf("<span class=\"h1\">") + 18;
+    int endPos = time.indexOf("</span>", startPos);
+    time = time.substring(startPos, endPos);
+
+    // Enviar la hora actual al cliente WebSocket
+    ws.textAll(time);
+  } else {
+    Serial.println("Error al conectar a la página web");
+  }
+
+  // Desconectarse del servidor
+  client.stop();
+
+  // Esperar 10 segundos antes de obtener el tiempo de nuevo
+  delay(10000);
+}
+
+// Página web index.html
+const char* index_html = R"(
+<!DOCTYPE html>
+<html>
+<head>
+<title>Tiempo actual</title>
+</head>
+<body>
+<h1>Tiempo actual:</h1>index_html
+<p id="time"></p>
+<script>
+var socket = new WebSocket("ws://192.168.1.100:81/ws");
+
+socket.onmessage = function(event) {
+  document.getElementById("time").innerHTML = event.data;
+};
+
+socket.onopen = function() {
+  socket.send("gettime");
+};
+</script>
+</body>
+</html>
+)";
+
